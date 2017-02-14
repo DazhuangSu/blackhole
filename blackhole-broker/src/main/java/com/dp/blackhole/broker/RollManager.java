@@ -79,9 +79,9 @@ public class RollManager {
         LOG.info("roll manager started");
     }
     
-    public boolean perpareUpload(String app, String source, long period, RollPartition rollPartition) {
+    public boolean perpareUpload(String app, String source, long period, long currentPeriod, RollPartition rollPartition) {
         boolean ret;
-        RollIdent ident = getRollIdent(app, source, period);
+        RollIdent ident = getRollIdent(app, source, period, currentPeriod);
         if (rolls.get(ident) == null) {
             rolls.put(ident, rollPartition);
             Message message = PBwrap.wrapReadyUpload(ident.topic, ident.source, ident.period, ident.ts);
@@ -155,13 +155,12 @@ public class RollManager {
         uploadPool.execute(marker);
     }
     
-    private RollIdent getRollIdent(String app, String source, long period) {
-        Date time = new Date(Util.getLatestRollTsUnderTimeBuf(Util.getTS(), period, clockSyncBufMillis));
+    private RollIdent getRollIdent(String app, String source, long period, long currentPeriod) {
         RollIdent roll = new RollIdent();
         roll.topic = app;
         roll.source = source;
         roll.period = period;
-        roll.ts = time.getTime();
+        roll.ts = currentPeriod;
         return roll;
     }
     

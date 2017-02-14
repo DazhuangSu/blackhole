@@ -9,19 +9,21 @@ public class RollRequest extends NonDelegationTypedWrappable {
     public String topic;
     public String partitionId;
     public long rollPeriod;
+    public long currentPeriod;
     
     public RollRequest() {
     }
     
-    public RollRequest(String topic, String partitionId, long rollPeriod) {
+    public RollRequest(String topic, String partitionId, long rollPeriod, long currentPeriod) {
         this.topic = topic;
         this.partitionId = partitionId;
         this.rollPeriod = rollPeriod;
+        this.currentPeriod = currentPeriod;
     }
     
     @Override
     public int getSize() {
-        return GenUtil.getStringSize(topic) + GenUtil.getStringSize(partitionId) + Long.SIZE/8;
+        return GenUtil.getStringSize(topic) + GenUtil.getStringSize(partitionId) + (Long.SIZE * 2) / 8;
     }
 
     @Override
@@ -29,6 +31,7 @@ public class RollRequest extends NonDelegationTypedWrappable {
         topic = GenUtil.readString(buffer);
         partitionId = GenUtil.readString(buffer);
         rollPeriod = buffer.getLong();
+        currentPeriod = buffer.getLong();
     }
 
     @Override
@@ -36,6 +39,7 @@ public class RollRequest extends NonDelegationTypedWrappable {
         GenUtil.writeString(topic, buffer);
         GenUtil.writeString(partitionId, buffer);
         buffer.putLong(rollPeriod);
+        buffer.putLong(currentPeriod);
     }
 
     @Override

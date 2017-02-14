@@ -12,18 +12,17 @@ import org.apache.commons.logging.LogFactory;
 import com.dp.blackhole.common.ParamsKey;
 import com.dp.blackhole.common.Sender;
 import com.dp.blackhole.common.TopicCommonMeta;
+import com.dp.blackhole.common.Util;
 import com.dp.blackhole.network.BlockingConnection;
 import com.dp.blackhole.network.TransferWrap;
-import com.dp.blackhole.network.TypedFactory;
 import com.dp.blackhole.network.TransferWrapBlockingConnection.TransferWrapBlockingConnectionFactory;
+import com.dp.blackhole.network.TypedFactory;
 import com.dp.blackhole.protocol.data.DataMessageTypeFactory;
 import com.dp.blackhole.protocol.data.HaltRequest;
 import com.dp.blackhole.protocol.data.HeartBeatRequest;
-import com.dp.blackhole.protocol.data.ProduceRequest;
 import com.dp.blackhole.protocol.data.ProducerRegReply;
 import com.dp.blackhole.protocol.data.RegisterRequest;
 import com.dp.blackhole.protocol.data.RollRequest;
-import com.dp.blackhole.storage.ByteBufferMessageSet;
 import com.dp.blackhole.storage.Message;
 
 public class PartitionConnection implements Sender {
@@ -110,7 +109,8 @@ public class PartitionConnection implements Sender {
     }
     
     public void sendRollRequest() throws IOException {
-        RollRequest request = new RollRequest(topic, partitionId, rollPeriod);
+        RollRequest request = new RollRequest(topic, partitionId, rollPeriod,
+                Util.getLatestRollTsUnderTimeBuf(Util.getTS(), rollPeriod, 30L));
         TransferWrap wrap = new TransferWrap(request);
         connection.write(wrap);
     }

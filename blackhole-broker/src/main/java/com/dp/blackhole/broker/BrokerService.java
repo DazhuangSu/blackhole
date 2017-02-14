@@ -358,7 +358,7 @@ public class BrokerService extends Thread {
             }
             try {
                 RollPartition roll = p.markRollPartition();
-                Broker.getRollMgr().perpareUpload(request.topic, request.partitionId, request.rollPeriod, roll);
+                Broker.getRollMgr().perpareUpload(request.topic, request.partitionId, request.rollPeriod, request.currentPeriod, roll);
             } catch (IOException e) {
                 LOG.error("Got an IOE", e);
             }

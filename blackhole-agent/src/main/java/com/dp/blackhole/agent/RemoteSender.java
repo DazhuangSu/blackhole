@@ -149,11 +149,11 @@ public class RemoteSender implements Sender{
         connection.write(wrap);
     }
     
-    public void sendRollRequest() throws IOException {
+    public void sendRollRequest(long currentPeriod) throws IOException {
         RollRequest request = new RollRequest(
                 topicId.getTopic(),
                 source,
-                rollPeriod);
+                rollPeriod, currentPeriod);
         TransferWrap wrap = new TransferWrap(request);
         connection.write(wrap);
     }

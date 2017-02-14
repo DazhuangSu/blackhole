@@ -3,7 +3,6 @@ package com.dp.blackhole.agent;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.SocketException;
@@ -13,8 +12,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import com.dp.blackhole.common.ParamsKey;
-import com.dp.blackhole.common.Util;
 import com.dp.blackhole.common.ParamsKey.TopicConf;
+import com.dp.blackhole.common.Util;
 
 public class LogReader implements Runnable {
     private static final Log LOG = LogFactory.getLog(LogReader.class);
@@ -28,6 +27,7 @@ public class LogReader implements Runnable {
     private AgentMeta meta;
     private volatile RemoteSender sender;
     private LogFSM logFSM;
+    private RotateQueue rotateQueue;
     private AtomicReference<ReaderState> currentReaderState;
     private RandomAccessFile reader;
     private final File tailFile;
@@ -43,6 +43,7 @@ public class LogReader implements Runnable {
         this.meta = meta;
         this.currentReaderState = new AtomicReference<ReaderState>(ReaderState.UNASSIGNED);
         this.logFSM = new LogFSM();
+        this.rotateQueue = new RotateQueue(meta.getRollPeriod());
         this.maxLineSize = meta.getMaxLineSize();
         this.currentRotation = setCurrentRotation();
         this.lineBuf = new ByteArrayOutputStream(maxLineSize);
@@ -72,11 +73,12 @@ public class LogReader implements Runnable {
     }
 
     public boolean register() {
-        return agent.getListener().registerLogReader(meta.getTailFile(), logFSM);
+        return agent.getListener().registerLogReader(meta.getTailFile(), rotateQueue);
     }
 
     public void unregister() {
-        agent.getListener().unregisterLogReader(meta.getTailFile(), logFSM);
+        agent.getListener().unregisterLogReader(meta.getTailFile(), rotateQueue);
+        this.logFSM.resetCurrentLogStatus();
     }
     
     public void stop() {
@@ -121,8 +123,17 @@ public class LogReader implements Runnable {
     @Override
     public void run() {
         LOG.info("Log reader for " + meta + " running...");
+        // registering before openFile is better because rotate may happen between openFile and register
+        if (!register()) {
+            LOG.error("Failed to register a log reader for " + meta.getTopicId()
+            + " with " + meta.getTailFile() + "log reader will exit.");
+            closeFile(reader);
+            agent.reportLogReaderFailure(meta.getTopicId(), meta.getSource(), Util.getTS());
+            currentReaderState.set(ReaderState.STOPPED);
+            return;
+        }
         try {
-            this.reader = openFile();
+            this.reader = this.rotateQueue.getCurrentFile();
             long tailPosition = meta.getTailPosition();
             if (tailPosition == TopicConf.FILE_TAIL) {
                 tailPosition = Util.seekLastLineHeader(reader, reader.length());
@@ -134,6 +145,7 @@ public class LogReader implements Runnable {
                 tailPosition = Util.seekLastLineHeader(reader, reader.length());
             }
             LOG.info("tail " + tailFile + " from " + tailPosition);
+            this.logFSM.doFileAppendForce();
         } catch (IOException e) {
             LOG.error("Oops, resume fail", e);
             closeFile(reader);
@@ -142,14 +154,6 @@ public class LogReader implements Runnable {
             return;
         }
         
-        if (!register()) {
-            LOG.error("Failed to register a log reader for " + meta.getTopicId() 
-                    + " with " + meta.getTailFile() + "log reader will exit.");
-            closeFile(reader);
-            agent.reportLogReaderFailure(meta.getTopicId(), meta.getSource(), Util.getTS());
-            currentReaderState.set(ReaderState.STOPPED);
-            return;
-        }
         
         // main loop
         loop();
@@ -161,11 +165,6 @@ public class LogReader implements Runnable {
         sender = null;
         unregister();
         LOG.warn("terminate log reader " + meta.getTopicId() + ", resources released.");
-    }
-
-    private RandomAccessFile openFile() throws FileNotFoundException {
-        RandomAccessFile raf = new RandomAccessFile(tailFile, "r");
-        return raf;
     }
 
     private void closeFile(RandomAccessFile raf) {
@@ -182,9 +181,6 @@ public class LogReader implements Runnable {
                 case APPEND:
                     process();
                     Thread.sleep(meta.getReadInterval());
-                    break;
-                case ROTATE:
-                    processRotate();
                     break;
                 case HALT:
                     processHalt();
@@ -214,7 +210,14 @@ public class LogReader implements Runnable {
     public void process() {
         try {
             if (currentReaderState.get() == ReaderState.ASSIGNED) {
-                readLines(reader);
+                if (this.rotateQueue.isRotated()) {
+                    readLines(reader);
+                    sender.sendMessage();
+                    sender.sendRollRequest(this.rotateQueue.getCurrentPeriod());
+                    this.reader = this.rotateQueue.finishRotate();
+                } else {
+                    readLines(reader);
+                }
             }
         } catch (SocketException e) {
             LOG.error("Fail while sending message, reassign sender", e);
@@ -222,45 +225,6 @@ public class LogReader implements Runnable {
         } catch (IOException e) {
             LOG.error("Oops, got an exception:", e);
             throw new RuntimeException("log reader loop terminate, prepare to reboot log reader.");
-        }
-    }
-    
-    public void processRotate() {
-        if (currentReaderState.get() != ReaderState.ASSIGNED) {
-            LOG.warn("RemoteSender not ready for " + meta.getTopicId());
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                LOG.error("Interrupted!", e);
-            }
-            return;
-        }
-        
-        try {
-            final RandomAccessFile save = reader;
-            try {
-                this.reader = openFile();
-                readLines(save);
-            } catch (SocketException e) {
-                throw e;
-            } catch (IOException e) {
-                LOG.error("Oops, got an exception:", e);
-                throw new RuntimeException("log reader loop terminate, prepare to reboot log reader.");
-            } finally {
-                closeFile(save);
-            }
-            
-            if (currentReaderState.get() == ReaderState.ASSIGNED) {
-                //send left message force
-                sender.sendMessage();
-                //send roll request to broker
-                sender.sendRollRequest();
-            }
-        } catch (IOException e) {
-            LOG.error("Fail while sending rotate request, reassign sender", e);
-            reassignSender(sender);
-        } finally {
-            logFSM.finishLogRotate();
         }
     }
     
